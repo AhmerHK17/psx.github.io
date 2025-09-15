@@ -292,4 +292,552 @@
             };
         }).filter(Boolean);
 
-        state.cachedData[
+        state.cachedData[symbol] = { ...state.cachedData[symbol], announcements };
+        return announcements;
+    }
+    
+    // --- PARSING FUNCTIONS (from HTML doc) ---
+    function parseMetadata(doc) {
+        const getText = (selector) => sanitizeText(doc.querySelector(selector)?.textContent);
+        
+        const keyPeople = Array.from(doc.querySelectorAll('.profile__item--people tbody tr')).map(row => {
+            const cells = row.querySelectorAll('td');
+            return { role: sanitizeText(cells[1]?.textContent), name: sanitizeText(cells[0]?.textContent) };
+        });
+
+        const profileItems = {};
+        doc.querySelectorAll('.profile__item').forEach(item => {
+            const head = item.querySelector('.item__head')?.textContent.trim().toLowerCase().replace(/\s+/g, '_');
+            const value = item.querySelector('p')?.textContent.trim();
+            if (head && value) profileItems[head] = value;
+        });
+        
+        return {
+            company_name: getText('.quote__name'),
+            sector: getText('.quote__sector span'),
+            last_close: getText('.quote__close'),
+            change_value: getText('.change__value'),
+            change_percent: getText('.change__percent'),
+            day_range: getText('.stats_item:nth-child(1) .stats_value'),
+            week_range_52: getText('.stats_item:nth-child(2) .stats_value'),
+            market_cap: getText('.stats_item:nth-child(3) .stats_value'),
+            shares_outstanding: getText('.stats_item:nth-child(4) .stats_value'),
+            free_float: getText('.stats_item:nth-child(5) .stats_value'),
+            description: getText('.profile__item--description p'),
+            key_people: keyPeople,
+            profile: profileItems
+        };
+    }
+
+    function parseFinancials(doc) {
+        const parseTable = (tableSelector) => {
+            const table = doc.querySelector(tableSelector);
+            if (!table) return { headers: [], rows: [] };
+            const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim()).slice(1);
+            const rows = Array.from(table.querySelectorAll('tbody tr')).map(row => {
+                const cells = Array.from(row.querySelectorAll('td'));
+                const label = cells[0]?.textContent.trim();
+                const values = cells.slice(1).map(td => sanitizeText(td.textContent));
+                return { label, values };
+            });
+            return { headers, rows };
+        };
+        
+        return {
+            ratios: parseTable('.company__ratios table'),
+            annual: parseTable('div[data-name="Annual"] table'),
+            quarterly: parseTable('div[data-name="Quarterly"] table'),
+        };
+    }
+
+    // --- UI RENDERING ---
+    
+    function renderNavigation() {
+        navigation.innerHTML = navItems.map(item => `
+            <a href="#" id="nav-${item.id}" data-tab="${item.id}" class="nav-item flex items-center p-3 rounded-md transition-colors ${state.activeTab === item.id ? 'bg-blue-600 text-white' : 'hover:bg-gray-700'}">
+                <i data-lucide="${item.icon}" class="h-5 w-5 mr-3"></i>
+                <span>${item.name}</span>
+            </a>
+        `).join('');
+        lucide.createIcons();
+    }
+    
+    async function renderActiveTab() {
+        showView('loader-view');
+        try {
+            switch(state.activeTab) {
+                case 'snapshot':
+                    const { metadata } = await fetchCompanyPage(state.currentSymbol);
+                    renderSnapshot(metadata);
+                    break;
+                case 'financials':
+                    const { financials } = await fetchCompanyPage(state.currentSymbol);
+                    renderFinancials(financials);
+                    break;
+                case 'historical':
+                    const historicalData = await fetchHistoricalData(state.currentSymbol);
+                    renderHistorical(historicalData);
+                    break;
+                case 'intraday':
+                    const intradayData = await fetchIntradayData(state.currentSymbol);
+                    renderIntraday(intradayData);
+                    break;
+                case 'announcements':
+                    const announcementsData = await fetchAnnouncements(state.currentSymbol);
+                    renderAnnouncements(announcementsData);
+                    break;
+                case 'comparison':
+                    renderComparison();
+                    break;
+            }
+            showView('data-views-container');
+        } catch (error) {
+            console.error(error);
+            dataViewsContainer.innerHTML = `<div class="bg-gray-800 p-8 rounded-lg text-center">
+                <i data-lucide="WifiOff" class="h-12 w-12 text-red-500 mx-auto mb-4"></i>
+                <h3 class="text-xl font-semibold text-white">Data Fetch Failed</h3>
+                <p class="text-gray-400 mt-2">Could not load data for ${state.currentSymbol}. The PSX server might be unavailable or the symbol is invalid. Please try again later.</p>
+            </div>`;
+            lucide.createIcons();
+            showView('data-views-container');
+        }
+    }
+    
+    function createCard(title, value, changeValue = '', changePercent = '') {
+        const isPositive = !changeValue.includes('-');
+        const changeColor = changeValue ? (isPositive ? 'text-green-400' : 'text-red-400') : 'text-gray-400';
+        return `
+            <div class="bg-gray-800 p-4 rounded-lg">
+                <p class="text-sm text-gray-400">${title}</p>
+                <p class="text-2xl font-bold text-white">${value}</p>
+                ${changeValue ? `<p class="text-sm ${changeColor}">${changeValue} (${changePercent})</p>` : ''}
+            </div>
+        `;
+    }
+    
+    function renderSnapshot(data) {
+        const profileHtml = Object.entries(data.profile).map(([key, value]) => `
+            <div class="flex justify-between py-2 border-b border-gray-700">
+                <span class="text-gray-400 capitalize">${key.replace(/_/g, ' ')}</span>
+                <span class="text-white font-medium text-right">${value}</span>
+            </div>
+        `).join('');
+        
+        const peopleHtml = data.key_people.map(p => `
+            <div class="flex justify-between py-2 border-b border-gray-700">
+                <span class="text-gray-400">${p.role}</span>
+                <span class="text-white font-medium">${p.name}</span>
+            </div>
+        `).join('');
+
+        dataViewsContainer.innerHTML = `
+            <div class="space-y-6">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">${data.company_name} (${state.currentSymbol})</h2>
+                        <p class="text-gray-400">${data.sector}</p>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                    ${createCard('Last Close', data.last_close, data.change_value, data.change_percent)}
+                    ${createCard('Day Range', data.day_range)}
+                    ${createCard('52-Week Range', data.week_range_52)}
+                    ${createCard('Market Cap', data.market_cap)}
+                    ${createCard('Free Float (Shares)', data.free_float)}
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2 bg-gray-800 p-6 rounded-lg">
+                        <h3 class="text-xl font-semibold text-white mb-4">Business Description</h3>
+                        <p class="text-gray-300 leading-relaxed">${data.description}</p>
+                    </div>
+                    <div class="bg-gray-800 p-6 rounded-lg">
+                        <h3 class="text-xl font-semibold text-white mb-4">Company Profile</h3>
+                        <div class="space-y-2">${profileHtml}</div>
+                    </div>
+                </div>
+                
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <h3 class="text-xl font-semibold text-white mb-4">Key People</h3>
+                    <div class="space-y-2">${peopleHtml}</div>
+                </div>
+            </div>
+        `;
+    }
+    
+    function renderFinancials(data) {
+        const createTable = (title, tableData) => {
+            if (!tableData || tableData.rows.length === 0) {
+                return `<div class="bg-gray-800 p-6 rounded-lg">
+                    <h3 class="text-xl font-semibold text-white mb-4">${title}</h3>
+                    <p class="text-gray-400">Data not available.</p>
+                </div>`;
+            }
+            return `
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <h3 class="text-xl font-semibold text-white mb-4">${title}</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead>
+                                <tr class="border-b border-gray-700">
+                                    <th class="p-2">Metric</th>
+                                    ${tableData.headers.map(h => `<th class="p-2 text-right">${h}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${tableData.rows.map(row => `
+                                    <tr class="border-b border-gray-600">
+                                        <td class="p-2 font-medium">${row.label}</td>
+                                        ${row.values.map(v => `<td class="p-2 text-right">${formatNumber(v)}</td>`).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        };
+
+        dataViewsContainer.innerHTML = `
+            <div class="space-y-6">
+                ${createTable('Financial Ratios', data.ratios)}
+                ${createTable('Annual Financials', data.annual)}
+                ${createTable('Quarterly Financials', data.quarterly)}
+            </div>
+        `;
+    }
+
+    function renderHistorical(data) {
+        dataViewsContainer.innerHTML = `<div class="space-y-6">
+            <div class="bg-gray-800 p-6 rounded-lg"><canvas id="priceChart"></canvas></div>
+            <div class="bg-gray-800 p-6 rounded-lg"><canvas id="volumeChart"></canvas></div>
+            <div class="bg-gray-800 p-6 rounded-lg"><canvas id="maChart"></canvas></div>
+        </div>`;
+        
+        const labels = data.map(d => new Date(d.date).getTime());
+        const closePrices = data.map(d => d.close);
+        const volumes = data.map(d => d.volume);
+
+        const calculateMA = (data, window) => {
+            let result = [];
+            for (let i = 0; i < data.length; i++) {
+                if (i < window -1) {
+                    result.push(null);
+                } else {
+                    let sum = 0;
+                    for (let j = 0; j < window; j++) {
+                        sum += data[i - j];
+                    }
+                    result.push(sum / window);
+                }
+            }
+            return result;
+        };
+
+        const ma50 = calculateMA(closePrices, 50);
+        const ma200 = calculateMA(closePrices, 200);
+
+        const chartOptions = {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { type: 'time', time: { unit: 'month' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                y: { grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+            },
+            plugins: { legend: { labels: { color: '#d1d5db' } } }
+        };
+
+        new Chart('priceChart', {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: `${state.currentSymbol} Closing Price`,
+                    data: closePrices,
+                    borderColor: '#3b82f6',
+                    tension: 0.1,
+                    pointRadius: 0
+                }]
+            },
+            options: { ...chartOptions, plugins: {...chartOptions.plugins, title: { display: true, text: 'Closing Price', color: 'white'}}}
+        });
+
+        new Chart('volumeChart', {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Volume',
+                    data: volumes,
+                    backgroundColor: 'rgba(59, 130, 246, 0.5)'
+                }]
+            },
+            options: { ...chartOptions, plugins: {...chartOptions.plugins, title: { display: true, text: 'Volume Traded', color: 'white'}}}
+        });
+
+        new Chart('maChart', {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Closing Price', data: closePrices, borderColor: '#3b82f6', pointRadius: 0 },
+                    { label: '50-Day MA', data: ma50, borderColor: '#f97316', pointRadius: 0, borderDash: [5, 5] },
+                    { label: '200-Day MA', data: ma200, borderColor: '#ef4444', pointRadius: 0, borderDash: [5, 5] }
+                ]
+            },
+            options: { ...chartOptions, plugins: {...chartOptions.plugins, title: { display: true, text: 'Moving Averages', color: 'white'}}}
+        });
+    }
+
+    function renderIntraday(data) {
+        if (!data || data.length === 0) {
+            dataViewsContainer.innerHTML = `<div class="bg-gray-800 p-6 rounded-lg text-center"><p>No intraday data available for ${state.currentSymbol}.</p></div>`;
+            return;
+        }
+
+        const processedData = data.map(d => ({
+            time: d.time * 1000,
+            price: d.price,
+            volume: d.volume
+        })).sort((a,b) => a.time - b.time);
+
+        let cumulativeVolume = 0;
+        let cumulativePV = 0;
+        const vwapData = processedData.map(d => {
+            cumulativeVolume += d.volume;
+            cumulativePV += d.price * d.volume;
+            return cumulativeVolume > 0 ? cumulativePV / cumulativeVolume : d.price;
+        });
+
+        dataViewsContainer.innerHTML = `<div class="bg-gray-800 p-6 rounded-lg"><canvas id="intradayChart"></canvas></div>`;
+
+        new Chart('intradayChart', {
+            type: 'line',
+            data: {
+                labels: processedData.map(d => d.time),
+                datasets: [
+                    { label: 'Price', data: processedData.map(d => d.price), yAxisID: 'y', borderColor: '#3b82f6', pointRadius: 0},
+                    { label: 'VWAP', data: vwapData, yAxisID: 'y', borderColor: '#f97316', pointRadius: 0, borderDash: [5,5] },
+                    { label: 'Volume', data: processedData.map(d => d.volume), yAxisID: 'y1', type: 'bar', backgroundColor: 'rgba(255, 255, 255, 0.2)'}
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { unit: 'minute' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                    y: { type: 'linear', position: 'left', grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: {color: '#3b82f6'}},
+                    y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: {color: 'rgba(255,255,255,0.5)'} }
+                },
+                plugins: { legend: { labels: { color: '#d1d5db' } }, title: { display: true, text: 'Intraday Price, VWAP & Volume', color: 'white'} }
+            }
+        });
+    }
+
+    function renderAnnouncements(data) {
+        const announcementsHtml = data.length > 0 ? data.map(item => `
+            <div class="py-3 border-b border-gray-700">
+                <div class="flex justify-between items-center">
+                    <h4 class="font-semibold text-white">${item.title}</h4>
+                    ${item.link ? `<a href="${item.link}" target="_blank" class="text-blue-400 hover:text-blue-300 transition-colors">View PDF</a>` : ''}
+                </div>
+                <p class="text-sm text-gray-400">${item.date} at ${item.time}</p>
+            </div>
+        `).join('') : '<p class="text-gray-400">No recent announcements found.</p>';
+        
+        dataViewsContainer.innerHTML = `<div class="bg-gray-800 p-6 rounded-lg">
+            <h3 class="text-xl font-semibold text-white mb-4">Latest Announcements</h3>
+            <div class="space-y-2">${announcementsHtml}</div>
+        </div>`;
+    }
+
+    function renderComparison() {
+        const { tickers } = state.comparison;
+        dataViewsContainer.innerHTML = `
+            <div class="space-y-6">
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <h3 class="text-xl font-semibold text-white mb-4">Select Companies to Compare</h3>
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="relative flex-grow" id="compare-search-container">
+                            <input type="text" id="compareSearchInput" placeholder="Add up to ${state.comparison.max} companies..." class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                             <div id="compareSearchDropdown" class="search-dropdown-content mt-1 rounded-md shadow-lg"></div>
+                        </div>
+                        <button id="run-comparison-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">Compare</button>
+                    </div>
+                    <div id="selected-tickers-list" class="flex flex-wrap gap-2">
+                        ${tickers.map(ticker => `
+                            <span class="flex items-center bg-gray-700 text-sm rounded-full px-3 py-1">
+                                ${ticker}
+                                <button data-ticker="${ticker}" class="remove-ticker-btn ml-2 text-gray-400 hover:text-white">&times;</button>
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+                <div id="comparison-results" class="space-y-6"></div>
+            </div>`;
+
+        // Setup searchable dropdown for comparison
+        const compareInput = document.getElementById('compareSearchInput');
+        const compareDropdown = document.getElementById('compareSearchDropdown');
+        populateSearchDropdown(compareDropdown, (symbol) => {
+            if (tickers.length < state.comparison.max && !tickers.includes(symbol)) {
+                tickers.push(symbol);
+                renderComparison(); // Re-render to show added ticker
+            }
+            compareInput.value = '';
+            compareDropdown.style.display = 'none';
+        });
+        
+        compareInput.addEventListener('keyup', () => filterFunction(compareInput, compareDropdown));
+        document.getElementById('compare-search-container').addEventListener('focusin', () => compareDropdown.style.display = 'block');
+        document.getElementById('compare-search-container').addEventListener('focusout', (e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) {
+                compareDropdown.style.display = 'none';
+            }
+        });
+        
+        // Add event listeners for remove and run buttons
+        document.querySelectorAll('.remove-ticker-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tickerToRemove = e.target.dataset.ticker;
+                state.comparison.tickers = state.comparison.tickers.filter(t => t !== tickerToRemove);
+                renderComparison();
+            });
+        });
+
+        document.getElementById('run-comparison-btn').addEventListener('click', runComparison);
+    }
+    
+    async function runComparison() {
+        const resultsContainer = document.getElementById('comparison-results');
+        resultsContainer.innerHTML = `<div class="flex items-center justify-center p-8"><div class="loader"></div><p class="ml-4">Comparing tickers...</p></div>`;
+        
+        const { tickers } = state.comparison;
+        if (tickers.length < 2) {
+            resultsContainer.innerHTML = `<p class="text-yellow-400 text-center">Please select at least two companies to compare.</p>`;
+            return;
+        }
+
+        try {
+            const dataPromises = tickers.map(ticker => fetchHistoricalData(ticker));
+            const allData = await Promise.all(dataPromises);
+
+            // Normalize data by start date
+            const priceData = {};
+            allData.forEach((data, index) => {
+                const ticker = tickers[index];
+                const startPrice = data[0]?.close;
+                if (!startPrice) return;
+                priceData[ticker] = data.map(d => ({
+                    x: new Date(d.date).getTime(),
+                    y: (d.close / startPrice - 1) * 100 // Normalized percentage change
+                }));
+            });
+
+            resultsContainer.innerHTML = `<div class="bg-gray-800 p-6 rounded-lg"><canvas id="comparisonChart"></canvas></div>`;
+            
+            const colors = ['#3b82f6', '#10b981', '#f97316', '#8b5cf6'];
+            const datasets = Object.keys(priceData).map((ticker, i) => ({
+                label: `${ticker} % Change`,
+                data: priceData[ticker],
+                borderColor: colors[i % colors.length],
+                tension: 0.1,
+                pointRadius: 0
+            }));
+
+            new Chart('comparisonChart', {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'month' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                        y: { title: { display: true, text: 'Price Change (%)'}, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                    },
+                    plugins: { 
+                        legend: { labels: { color: '#d1d5db' } },
+                        title: { display: true, text: 'Normalized Stock Performance', color: 'white' },
+                        tooltip: { callbacks: { label: (context) => `${context.dataset.label}: ${context.raw.y.toFixed(2)}%` } }
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error("Comparison failed:", error);
+            resultsContainer.innerHTML = `<p class="text-red-500 text-center">Failed to fetch data for comparison. Please try again.</p>`;
+        }
+    }
+
+
+    // --- EVENT HANDLING & INITIALIZATION ---
+    
+    function populateSearchDropdown(dropdownElement, onSelect) {
+        const sortedSymbols = Object.keys(SYMBOLS).sort();
+        let content = '';
+        for (const symbol of sortedSymbols) {
+            content += `<a href="#" data-symbol="${symbol}">${symbol} - ${SYMBOLS[symbol]}</a>`;
+        }
+        dropdownElement.innerHTML = content;
+        
+        dropdownElement.addEventListener('click', (e) => {
+            e.preventDefault();
+            const symbol = e.target.dataset.symbol;
+            if (symbol) {
+                onSelect(symbol);
+            }
+        });
+    }
+
+    function filterFunction(input = searchInput, dropdown = searchDropdown) {
+        const filter = input.value.toUpperCase();
+        const links = dropdown.getElementsByTagName('a');
+        for (let i = 0; i < links.length; i++) {
+            const txtValue = links[i].textContent || links[i].innerText;
+            links[i].style.display = txtValue.toUpperCase().indexOf(filter) > -1 ? "" : "none";
+        }
+    }
+
+    function selectSymbol(symbol) {
+        state.currentSymbol = symbol;
+        state.activeTab = 'snapshot';
+        searchInput.value = `${symbol} - ${SYMBOLS[symbol]}`;
+        searchDropdown.style.display = 'none';
+        
+        document.getElementById('navigation').classList.remove('hidden');
+        renderNavigation();
+        renderActiveTab();
+    }
+    
+    function init() {
+        populateSearchDropdown(searchDropdown, selectSymbol);
+        
+        // Handle search dropdown visibility
+        searchContainer.addEventListener('focusin', () => searchDropdown.style.display = 'block');
+        searchContainer.addEventListener('focusout', (e) => {
+            // Hide only if focus moves outside the container
+            if (!searchContainer.contains(e.relatedTarget)) {
+                searchDropdown.style.display = 'none';
+            }
+        });
+        
+        // Handle nav clicks
+        navigation.addEventListener('click', (e) => {
+            const navItem = e.target.closest('.nav-item');
+            if (navItem) {
+                e.preventDefault();
+                state.activeTab = navItem.dataset.tab;
+                renderNavigation();
+                if(state.currentSymbol || state.activeTab === 'comparison') {
+                    renderActiveTab();
+                }
+            }
+        });
+
+        lucide.createIcons();
+    }
+    
+    document.addEventListener('DOMContentLoaded', init);
+
+</script>
+</body>
+</html>
+
