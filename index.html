@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PSX Stock Analysis Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Custom scrollbar for a sleeker look */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #4b5563;
+            border-radius: 10px;
+            border: 2px solid #1f2937;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: #6b7280;
+        }
+        /* Style for the searchable dropdown */
+        .search-dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #1f2937;
+            border: 1px solid #4b5563;
+            min-width: 280px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        .search-dropdown-content a {
+            color: #d1d5db;
+            padding: 10px 14px;
+            text-decoration: none;
+            display: block;
+        }
+        .search-dropdown-content a:hover {
+            background-color: #374151;
+        }
+        /* Chart.js tooltip customization */
+        .chartjs-tooltip {
+            background: rgba(31, 41, 55, 0.8);
+            border-radius: 0.375rem;
+            color: white;
+            padding: 0.5rem;
+            pointer-events: none;
+            transition: all .1s ease;
+            backdrop-filter: blur(4px);
+        }
+        .loader {
+          border: 4px solid #374151;
+          border-left-color: #3b82f6;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-300 font-sans antialiased">
+    <div id="app" class="flex flex-col md:flex-row h-screen">
+
+        <!-- Sidebar -->
+        <aside class="w-full md:w-64 bg-gray-800 p-4 md:p-6 flex-shrink-0">
+            <div class="flex items-center mb-8">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500 h-8 w-8 mr-3"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                <h1 class="text-2xl font-bold text-white">PSX Analytics</h1>
+            </div>
+
+            <!-- Searchable Dropdown -->
+            <div class="relative mb-6" id="search-container">
+                <input type="text" id="searchInput" onkeyup="filterFunction()" placeholder="Search for company..." class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <div id="searchDropdown" class="search-dropdown-content mt-1 rounded-md shadow-lg">
+                    <!-- Tickers will be populated here by JS -->
+                </div>
+            </div>
+
+            <nav id="navigation" class="space-y-2">
+                <!-- Navigation items will be populated by JS -->
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto p-4 md:p-8">
+            <div id="main-content-area">
+                <!-- Welcome Message -->
+                <div id="welcome-view" class="h-full flex flex-col items-center justify-center text-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-20 w-20 text-gray-600 mb-4"><path d="M3 3v18h18"></path><path d="m19 9-5 5-4-4-3 3"></path></svg>
+                    <h2 class="text-3xl font-bold text-white mb-2">Welcome to PSX Analytics</h2>
+                    <p class="text-gray-400 max-w-md">Please search for a company symbol (e.g., OGDC, UBL, SYS) to begin your analysis.</p>
+                </div>
+
+                <!-- Loader -->
+                <div id="loader-view" class="hidden h-full flex flex-col items-center justify-center">
+                    <div class="loader"></div>
+                    <p class="mt-4 text-gray-400">Fetching data from PSX...</p>
+                </div>
+                
+                <!-- Data Views -->
+                <div id="data-views-container" class="hidden">
+                    <!-- Content for different tabs will be rendered here -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    // --- CONSTANTS & STATE ---
+    const SYMBOLS = {
+        "786": "786 Investments Limited", "AABS": "Al-Abbas Sugar Mills Limited", "AATM": "Ali Asghar Textile Mills Limited", "ABL": "Allied Bank Limited", "ABOT": "Abbott Laboratories (Pakistan) Limited",
+        "ACIETF": "Alfalah Consumer Index (ETF)", "ACPL": "Attock Cement Pakistan Limited", "ADAMS": "Adam Sugar Mills Limited", "ADMM": "Artistic Denim Mills Limited", "AGHA": "Agha Steel Ind.Ltd",
+        "AGIC": "Askari General Insurance Company Limited", "AGIL": "Agriauto Industries Limited", "AGL": "Agritech Limited", "AGP": "AGP Limited", "AGTL": "Al-Ghazi Tractors Limited",
+        "AHCL": "Arif Habib Corporation Limited", "AHL": "Arif Habib Limited", "AICL": "Adamjee Insurance Company Limited", "AIRLINK": "Air Link Communication Limited", "AKBL": "Askari Bank Limited",
+        "ALAC": "Askari Life Assurance Company Limited", "ALIFE": "Adamjee Life Assurance Company Limited", "ALTN": "Altern Energy Limited", "AMBL": "Apna Microfinance Bank Limited", "ANL": "Azgard Nine Limited",
+        "APL": "Attock Petroleum Limited", "ARPL": "Archroma Pakistan Limited", "ASL": "Aisha Steel Mills Limited", "ASTL": "Amreli Steels Limited", "ATBA": "Atlas Battery Limited",
+        "ATIL": "Atlas Insurance Limited", "ATLH": "Atlas Honda Limited", "ATRL": "Attock Refinery Limited", "AVN": "Avanceon Limited", "BAFL": "Bank Alfalah Limited", "BAHL": "Bank AL Habib Limited",
+        "BATA": "Bata Pakistan Limited", "BBFL": "Big Bird Foods Limited", "BCL": "Bolan Castings Limited", "BERG": "Berger Paints Pakistan Limited", "BGL": "Baluchistan Glass Limited",
+        "BIFO": "Biafo Industries Limited", "BIPL": "BankIslami Pakistan Limited", "BML": "Bank Makramah Limited", "BNL": "Bunnys Limited", "BOK": "The Bank of Khyber", "BOP": "The Bank of Punjab",
+        "BWCL": "Bestway Cement Limited", "BWHL": "Baluchistan Wheels Limited", "CEPB": "Century Paper & Board Mills Limited", "CHCC": "Cherat Cement Company Limited", "CLOV": "Clover Pakistan Limited",
+        "CNERGY": "Cnergyico PK Limited", "COLG": "Colgate-Palmolive (Pakistan) Limited", "CPHL": "Citi Pharma Ltd.", "CPPL": "Cherat Packaging Limited", "CSAP": "Crescent Steel & Allied Products Limited",
+        "CYAN": "Cyan Limited", "DADX": "Dadex Eternit Limited", "DCL": "Dewan Cement Limited", "DCR": "Dolmen City REIT", "DFML": "Dewan Farooque Motors Limited", "DGKC": "D.G. Khan Cement Company Limited",
+        "DLL": "Dawood Lawrencepur Limited", "DOL": "Descon Oxychem Limited", "DYNO": "Dynea Pakistan Limited", "ECOP": "Ecopack Limited", "EFERT": "Engro Fertilizers Limited", "EFUG": "EFU General Insurance Limited",
+        "EFUL": "EFU Life Assurance Limited", "ENGROH": "Engro Holdings Limited", "EPCL": "Engro Polymer & Chemicals Limited", "EPQL": "Engro Powergen Qadirpur Limited", "EXIDE": "Exide Pakistan Limited",
+        "FABL": "Faysal Bank Limited", "FATIMA": "Fatima Fertilizer Company Limited", "FCCL": "Fauji Cement Company Limited", "FCEPL": "Frieslandcampina Engro Pakistan Limited", "FCL": "Fast Cables Limited",
+        "FECTC": "Fecto Cement Limited", "FEROZ": "Ferozsons Laboratories Limited", "FFC": "Fauji Fertilizer Company Limited", "FFL": "Fauji Foods Limited", "FLYNG": "Flying Cement Company Limited",
+        "FML": "Feroze1888 Mills Limited", "GADT": "Gadoon Textile Mills Limited", "GAL": "Ghandhara Automobiles Limited", "GATI": "Gatron (Industries) Limited", "GATM": "Gul Ahmed Textile Mills Limited",
+        "GCIL": "Ghani Chemical Industries Limited", "GGGL": "Ghani Global Glass Limited", "GGL": "Ghani Global Holdings Limited", "GHGL": "Ghani Glass Limited", "GHNI": "Ghandhara Industries Limited",
+        "GLAXO": "GlaxoSmithKline Pakistan Limited", "GTYR": "Ghandhara Tyre & Rubber Company Limited", "GVGL": "Ghani Value Glass Limited", "GWLC": "Gharibwal Cement Limited", "HABSM": "Habib Sugar Mills Limited",
+        "HALEON": "Haleon Pakistan Limited", "HBL": "Habib Bank Limited", "HCAR": "Honda Atlas Cars (Pakistan) Limited", "HINO": "Hinopak Motors Limited", "HINOON": "Highnoon Laboratories Limited",
+        "HMB": "Habib Metropolitan Bank Limited", "HPL": "Hoechst Pakistan Limited", "HTL": "Hi-Tech Lubricants Limited", "HUBC": "The Hub Power Company Limited", "HUMNL": "Hum Network Limited",
+        "IBFL": "Ibrahim Fibres Limited", "IBLHL": "IBL HealthCare Limited", "ICL": "Ittehad Chemicals Limted", "IDYM": "Indus Dyeing & Manufacturing Co. Limited", "IGIHL": "IGI Holdings Limited",
+        "ILP": "Interloop Limited", "INDU": "Indus Motor Company Limited", "INIL": "International Industries Limited", "IPAK": "International Packaging Films Limited", "ISIL": "Ismail Industries Limited",
+        "ISL": "International Steels Limited", "ITTEFAQ": "Ittefaq Iron Industries Limited", "JDWS": "JDW Sugar Mills Limited", "JGICL": "Jubilee General Insurance Limited", "JLICL": "Jubilee Life Insurance Company Limited",
+        "JSBL": "JS Bank Limited", "JSCL": "Jahangir Siddiqui & Co. Ltd.", "JVDC": "Javedan Corporation Limited", "KAPCO": "Kot Addu Power Company Limited", "KCL": "Karam Ceramics Limited",
+        "KEL": "K-Electric Limited", "KOHC": "Kohat Cement Company Limited", "KTML": "Kohinoor Textile Mills Limited", "LCI": "Lucky Core Industries Limited", "LOADS": "Loads Limited",
+        "LOTCHEM": "Lotte Chemical Pakistan Limited", "LPL": "Lalpir Power Limited", "LUCK": "Lucky Cement Limited", "MACFL": "MACPAC Films Limited", "MACTER": "Macter International Limited",
+        "MARI": "Mari Energies Limited", "MCB": "MCB Bank Limited", "MEBL": "Meezan Bank Limited", "MFFL": "Mitchells Fruit Farms Limited", "MFL": "Matco Foods Limited",
+        "MLCF": "Maple Leaf Cement Factory Limited", "MTL": "Millat Tractors Limited", "MUGHAL": "Mughal Iron & Steel Industries Limited", "MUREB": "Murree Brewery Company Limited", "NATF": "National Foods Limited",
+        "NBP": "National Bank of Pakistan", "NCL": "Nishat Chunian Limited", "NCPL": "Nishat Chunian Power Limited", "NESTLE": "Nestle Pakistan Limited", "NETSOL": "NetSol Technologies Limited",
+        "NICL": "Nimir Industrial Chemicals Limited", "NML": "Nishat Mills Limited", "NPL": "Nishat Power Limited", "NRL": "National Refinery Limited", "NRSL": "Nimir Resins Limited",
+        "OCTOPUS": "Octopus Digital Limited", "OGDC": "Oil & Gas Development Company Limited", "OLPL": "OLP Financial Services Pakistan Limited", "OTSU": "Otsuka Pakistan Limited", "PABC": "Pakistan Aluminium Beverage Cans Limited",
+        "PACE": "Pace (Pakistan) Limited", "PAEL": "Pak Elektron Limited", "PAKD": "Pak Datacom Limited", "PAKOXY": "Pakistan Oxygen Limited", "PAKRI": "Pakistan Reinsurance Company Limited",
+        "PAKT": "Pakistan Tobacco Company Limited", "PCAL": "Pakistan Cables Limited", "PIBTL": "Pakistan International Bulk Terminal", "PICT": "Pakistan International Container", "PIOC": "Pioneer Cement Limited",
+        "PKGP": "Pakgen Power Limited", "PKGS": "Packages Limited", "PMPK": "Philip Morris (Pakistan) Limited", "PNSC": "Pakistan National Shipping Corporation", "POL": "Pakistan Oilfields Limited",
+        "POWER": "Power Cement Limited", "PPL": "Pakistan Petroleum Limited", "PREMA": "At-Tahur Limited", "PRL": "Pakistan Refinery Limited", "PSEL": "Pakistan Services Limited",
+        "PSO": "Pakistan State Oil Company Limited", "PSX": "Pakistan Stock Exchange Limited", "PTC": "Pakistan Telecommunication Company Ltd", "PTL": "Panther Tyres Ltd.", "RCML": "Reliance Cotton Spinning Mills Limited",
+        "RMPL": "Rafhan Maize Products Company Limited", "RUPL": "Rupali Polyester Limited", "SAZEW": "Sazgar Engineering Works Limited", "SBL": "Samba Bank Limited", "SCBPL": "Standard Chartered Bank (Pak) Ltd",
+        "SCL": "Shield Corporation Limited", "SEARL": "The Searle Company Limited", "SEPL": "Security Papers Limited", "SFL": "Sapphire Fibres Limited", "SGF": "Service GlobalFootwear Limited",
+        "SHFA": "Shifa International Hospitals Limited", "SIEM": "Siemens (Pakistan) Engineering", "SITC": "Sitara Chemical Industries Limited", "SNGP": "Sui Northern Gas Pipelines Limited", "SPEL": "SPEL Limited",
+        "SPWL": "Saif Power Limited", "SRVI": "Service Industries Limited", "SSGC": "Sui Southern Gas Company Limited", "SSOM": "S.S.Oil Mills Limited", "STCL": "Shabbir Tiles & Ceramics Limited",
+        "SYS": "Systems Limited", "TATM": "Tata Textile Mills Limited", "TBL": "Treet Battery Limited.", "TELE": "Telecard Limited", "TGL": "Tariq Glass Industries Limited", "THALL": "Thal Limited",
+        "THCCL": "Thatta Cement Company Limited", "TICL": "The Thal Industries Corporation Limited", "TOMCL": "The Organic Meat Company Limited", "TOWL": "Towellers Limited", "TPLP": "TPL Properties Limited",
+        "TPLT": "TPL Trakker Limited", "TREET": "Treet Corporation Limited", "TRG": "TRG Pakistan Limited", "TRIPF": "Tri-Pack Films Limited", "TSML": "Tandlianwala Sugar Mills Limited",
+        "UBL": "United Bank Limited", "UNIC": "The United Insurance Company", "UNITY": "Unity Foods Limited", "UPFL": "Unilever Pakistan Foods Limited", "WAFI": "Wafi Energy Pakistan Limited",
+        "WAHN": "Wah Noble Chemicals Limited", "WAVES": "Waves Corporation Limited", "WTL": "Worldcall Telecom Limited", "ZIL": "ZIL Limited"
+    };
+
+    const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+    
+    const navItems = [
+        { id: 'snapshot', name: 'Snapshot', icon: 'AreaChart' },
+        { id: 'financials', name: 'Financials', icon: 'BookOpen' },
+        { id: 'historical', name: 'Historical Data', icon: 'CalendarClock' },
+        { id: 'intraday', name: 'Intraday Data', icon: 'BarChart3' },
+        { id: 'announcements', name: 'Announcements', icon: 'Megaphone' },
+        { id: 'comparison', name: 'Comparative Analysis', icon: 'GitCompareArrows' }
+    ];
+
+    let state = {
+        currentSymbol: null,
+        activeTab: 'snapshot',
+        cachedData: {},
+        comparison: {
+            tickers: [],
+            max: 4,
+            data: {}
+        }
+    };
+    
+    // --- DOM ELEMENTS ---
+    const searchInput = document.getElementById('searchInput');
+    const searchDropdown = document.getElementById('searchDropdown');
+    const searchContainer = document.getElementById('search-container');
+    const navigation = document.getElementById('navigation');
+    const mainContent = document.getElementById('main-content-area');
+    const welcomeView = document.getElementById('welcome-view');
+    const loaderView = document.getElementById('loader-view');
+    const dataViewsContainer = document.getElementById('data-views-container');
+
+    // --- HELPER FUNCTIONS ---
+    const showView = (viewId) => {
+        welcomeView.classList.add('hidden');
+        loaderView.classList.add('hidden');
+        dataViewsContainer.classList.add('hidden');
+        document.getElementById(viewId).classList.remove('hidden');
+    };
+
+    const sanitizeText = (text) => text?.replace(/--/g, 'N/A').trim() || 'N/A';
+
+    const formatNumber = (numStr) => {
+        const num = parseFloat(numStr?.replace(/,/g, ''));
+        if (isNaN(num)) return 'N/A';
+        return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    
+    // --- API & PARSING ---
+    
+    // Fetches and parses main company page for metadata and financials
+    async function fetchCompanyPage(symbol) {
+        if (state.cachedData[symbol]?.page) return state.cachedData[symbol].page;
+        const url = `${CORS_PROXY}https://dps.psx.com.pk/company/${symbol}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to fetch data for ${symbol}`);
+        const htmlText = await response.text();
+        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+        
+        const data = {
+            metadata: parseMetadata(doc),
+            financials: parseFinancials(doc)
+        };
+        
+        state.cachedData[symbol] = { ...state.cachedData[symbol], page: data };
+        return data;
+    }
+
+    // Fetches historical price data
+    async function fetchHistoricalData(symbol) {
+        if (state.cachedData[symbol]?.historical) return state.cachedData[symbol].historical;
+        const url = `${CORS_PROXY}https://dps.psx.com.pk/company/${symbol}/prices`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch historical data');
+        const text = await response.text();
+        try {
+            const data = JSON.parse(text);
+            state.cachedData[symbol] = { ...state.cachedData[symbol], historical: data };
+            return data;
+        } catch (e) {
+            console.error("Failed to parse JSON for historical data:", text);
+            throw new Error(`Received non-JSON response for historical data for ${symbol}.`);
+        }
+    }
+    
+    // Fetches intraday price data
+    async function fetchIntradayData(symbol) {
+        if (state.cachedData[symbol]?.intraday) return state.cachedData[symbol].intraday;
+        const url = `${CORS_PROXY}https://dps.psx.com.pk/intraday/quote/${symbol}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch intraday data');
+        const text = await response.text();
+        try {
+            const data = JSON.parse(text);
+            state.cachedData[symbol] = { ...state.cachedData[symbol], intraday: data };
+            return data;
+        } catch (e) {
+            console.error("Failed to parse JSON for intraday data:", text);
+            throw new Error(`Received non-JSON response for intraday data for ${symbol}.`);
+        }
+    }
+    
+    // Fetches company announcements
+    async function fetchAnnouncements(symbol) {
+        if (state.cachedData[symbol]?.announcements) return state.cachedData[symbol].announcements;
+        const url = `${CORS_PROXY}https://dps.psx.com.pk/announcements/companies?symbol=${symbol}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch announcements');
+        const htmlText = await response.text();
+        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+
+        const announcements = Array.from(doc.querySelectorAll('#announcementsTable tbody tr')).slice(0, 10).map(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 6) return null;
+            const pdfLink = cells[5].querySelector('a[href*=".pdf"]');
+            return {
+                date: sanitizeText(cells[0].textContent),
+                time: sanitizeText(cells[1].textContent),
+                company: sanitizeText(cells[3].textContent),
+                title: sanitizeText(cells[4].textContent),
+                link: pdfLink ? `https://dps.psx.com.pk${pdfLink.getAttribute('href')}` : null
+            };
+        }).filter(Boolean);
+
+        state.cachedData[
